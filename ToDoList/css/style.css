@@ -1,0 +1,38 @@
+/* Reset */
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Arial', sans-serif; line-height:1.6; background:#121212; color:#e0e0e0; text-align:center; padding:2rem; }
+
+/* Header */
+header { margin-bottom:2rem; opacity:0; transform:translateY(20px); animation:fadeInUp 1s forwards; }
+header h1 { color:#00c853; font-size:2rem; }
+
+/* Contenedor ToDo */
+.todo-container { max-width:500px; margin:auto; background:#1e1e1e; padding:2rem; border-radius:15px; box-shadow:0 4px 15px rgba(0,255,83,0.3); opacity:0; transform:translateY(20px); animation:fadeInUp 1s forwards; animation-delay:0.2s; }
+
+/* Input y botón */
+#task-input { padding:0.5rem; width:70%; border-radius:5px; border:none; outline:none; margin-right:0.5rem; opacity:0; transform:translateX(-50px); animation:slideLeft 0.8s forwards; animation-delay:0.4s; }
+#add-btn { padding:0.5rem 1rem; border:none; border-radius:5px; background:#00c853; color:#121212; font-weight:bold; cursor:pointer; transition:0.3s; opacity:0; transform:translateX(50px); animation:slideRight 0.8s forwards; animation-delay:0.5s; }
+#add-btn:hover { background:#00e676; }
+
+/* Lista de tareas */
+ul { list-style:none; margin-top:1rem; padding:0; }
+li { background:#303030; margin:0.5rem 0; padding:0.5rem 1rem; border-radius:10px; display:flex; justify-content:space-between; align-items:center; transition:0.3s; opacity:0; transform:translateX(-20px); }
+li.completed { text-decoration:line-through; color:#b9f6ca; }
+li:hover { transform:translateY(-2px); box-shadow:0 4px 10px rgba(0,255,83,0.5); }
+
+/* Footer */
+footer { text-align:center; padding:2rem 0; background:#000; color:#b9f6ca; margin-top:2rem; opacity:0; transform:translateY(20px); animation:fadeInUp 1s forwards; animation-delay:0.2s; }
+
+/* Animaciones */
+@keyframes fadeInUp { to { opacity:1; transform:translateY(0); } }
+@keyframes slideLeft { to { opacity:1; transform:translateX(0); } }
+@keyframes slideRight { to { opacity:1; transform:translateX(0); } }
+
+/* Animación dinámica de tareas */
+.animate { opacity:0; transform:translateY(20px); transition:all 0.6s ease; }
+.animate.visible { opacity:1; transform:translateY(0); }
+
+/* Responsive */
+@media (max-width:500px) {
+    #task-input { width:60%; }
+}

@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asteroides - Alejandro Prieto Diez</title>
+</head>
+<body>
+    <canvas id="gameCanvas" width="760" height="570"></canvas>
+    <script>
+        const FPS = 30; // fotogramas por segundo
+        const FRICCION = 0.7; // coeficiente de fricción del espacio (0 = sin fricción, 1 = mucha fricción)
+        const VIDAS_JUEGO = 3; // número inicial de vidas
+        const DIST_LASER = 0.6; // distancia máxima que puede viajar el láser como fracción del ancho de la pantalla
+        const DUR_EXPLOSION_LASER = 0.1; // duración de la explosión de los láseres en segundos
+        const LASER_MAX = 10; // número máximo de láseres en pantalla a la vez
+        const VEL_LASER = 500; // velocidad de los láseres en píxeles por segundo
+        const AST_IRREGULARIDAD = 0.4; // irregularidad de los asteroides (0 = ninguno, 1 = mucha)
+        const AST_PTS_GRANDE = 20; // puntos obtenidos por un asteroide grande
+        const AST_PTS_MEDIANO = 50; // puntos obtenidos por un asteroide mediano
+        const AST_PTS_PEQUENO = 100; // puntos obtenidos por un asteroide pequeño
+        const AST_NUM = 3; // número inicial de asteroides
+        const AST_TAM = 100; // tamaño inicial de los asteroides en píxeles
+        const AST_VEL = 50; // velocidad máxima inicial de los asteroides en píxeles por segundo
+        const AST_VERT = 10; // número promedio de vértices en cada asteroide
+        const CLAVE_GUARDAR_PUNTUACION = "recordPuntuacion"; // clave para guardar en el almacenamiento local la puntuación más alta
+        const DUR_PARPADEO_NAVE = 0.1; // duración en segundos de un solo parpadeo durante la invisibilidad de la nave
+        const DUR_EXPLOSION_NAVE = 0.3; // duración de la explosión de la nave en segundos
+        const DUR_INV_NAVE = 3; // duración de la invisibilidad de la nave en segundos
+        const TAM_NAVE = 30; // altura de la nave en píxeles
+        const EMPUJE_NAVE = 5; // aceleración de la nave en píxeles por segundo por segundo
+        const VEL_GIRO_NAVE = 360; // velocidad de giro en grados por segundo
+        const MOSTRAR_LIMITES = false; // mostrar u ocultar el límite de colisión
+        const MOSTRAR_PUNTO_CENTRO = false; // mostrar u ocultar el punto central de la nave
+        const MUSICA_ENCENDIDA = true;
+        const SONIDO_ENCENDIDO = true;
+        const TIEMPO_DESVANECIMIENTO_TEXTO = 2.5; // tiempo de desvanecimiento del texto en segundos
+        const TAM_TEXTO = 40; // altura de la fuente del texto en píxeles
+
+        /** @type {HTMLCanvasElement} */
+        var lienzo = document.getElementById("gameCanvas");
+        var ctx = lienzo.getContext("2d");
+
+        // configurar efectos de sonido
+        var fxExplosion = new Sound("sounds/explode.m4a");
+        var fxGolpe = new Sound("sounds/hit.m4a", 5);
+        var fxLaser = new Sound("sounds/laser.m4a", 5, 0.5);
+        var fxEmpuje = new Sound("sounds/thrust.m4a");
+        
+        // configurar la música
+        var musica = new Music("sounds/music-low.m4a", "sounds/music-high.m4a");
+        var asteroidesRestantes, asteroidesTotales;
+
+        // configurar los parámetros del juego
+        var nivel, vidas, asteroides, puntuacion, puntuacionAlta, nave, texto, alfaTexto;
+        juegoNuevo();
+
+        // configurar los manejadores de eventos
+        document.addEventListener("keydown", teclaAbajo);
+        document.addEventListener("keyup", teclaArriba);
+
+        // configurar el bucle del juego
+        setInterval(actualizar, 1000 / FPS);
+
+        function crearCinturonAsteroides() {
+            asteroides = [];
+            asteroidesTotales = (AST_NUM + nivel) * 7;
+            asteroidesRestantes = asteroidesTotales;
+            var x, y;
+            for (var i = 0; i < AST_NUM + nivel; i++) {
+                // ubicación aleatoria del asteroide (sin tocar la nave espacial)
+                do {
+                    x = Math.floor(Math.random() * lienzo.width);
+                    y = Math.floor(Math.random() * lienzo.height);
+                } while (distanciaEntrePuntos(nave.x, nave.y, x, y) < AST_TAM * 2 + nave.r);
+                asteroides.push(nuevoAsteroide(x, y, Math.ceil(AST_TAM / 2)));
+            }
+        }
+
+        function destruirAsteroide(index) {
+            var x = asteroides[index].x;
+            var y = asteroides[index].y;
+            var r = asteroides[index].r;
+
+            // dividir el asteroide en dos si es necesario
+            if (r == Math.ceil(AST_TAM / 2)) { // asteroide grande
+                asteroides.push(nuevoAsteroide(x, y, Math.ceil(AST_TAM / 4)));
+                asteroides.push(nuevoAsteroide(x, y, Math.ceil(AST_TAM / 4)));
+                puntuacion += AST_PTS_GRANDE;
+            } else if (r == Math.ceil(AST_TAM / 4)) { // asteroide mediano
+                asteroides.push(nuevoAsteroide(x, y, Math.ceil(AST_TAM / 8)));
+                asteroides.push(nuevoAsteroide(x, y, Math.ceil(AST_TAM / 8)));
+                puntuacion += AST_PTS_MEDIANO;
+            } else {
+                puntuacion += AST_PTS_PEQUENO;
+            }
+
+            // verificar puntuación alta
+            if (puntuacion > puntuacionAlta) {
+                puntuacionAlta = puntuacion;
+                localStorage.setItem(CLAVE_GUARDAR_PUNTUACION, puntuacionAlta);
+            }
+
+            // destruir el asteroide
+            asteroides.splice(index, 1);
+            fxGolpe.play();
+
+            // calcular la relación de asteroides restantes para determinar el tempo de la música
+            asteroidesRestantes--;
+            musica.establecerRelacionAsteroides(asteroidesRestantes / asteroidesTotales);
+
+            // nuevo nivel cuando no hay más asteroides
+            if (asteroides.length == 0) {
+                nivel++;
+                nivelNuevo();
+            }
+        }
+
+        function distanciaEntrePuntos(x1, y1, x2, y2) {
+            return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+        }
+
+        function dibujarNave(x, y, a, color = "white") {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = TAM_NAVE / 20;
+            ctx.beginPath();
+            ctx.moveTo( // nariz de la nave
+                x + 4 / 3 * nave.r * Math.cos(a),
+                y - 4 / 3 * nave.r * Math.sin(a)
+            );
+            ctx.lineTo( // parte trasera izquierda
+                x - nave.r * (2 / 3 * Math.cos(a) + Math.sin(a)),
+                y + nave.r * (2 / 3 * Math.sin(a) - Math.cos(a))
+            );
+            ctx.lineTo( // parte trasera derecha
+                x - nave.r * (2 / 3 * Math.cos(a) - Math.sin(a)),
+                y + nave.r * (2 / 3 * Math.sin(a) + Math.cos(a))
+            );
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        function explotarNave() {
+            nave.tiempoExplosion = Math.ceil(DUR_EXPLOSION_NAVE * FPS);
+            fxExplosion.play();
+        }
+
+        function juegoTerminado() {
+            nave.muerta = true;
+            texto = "Game Over";
+            alfaTexto = 1.0;
+        }
+
+        function teclaAbajo(/** @type {KeyboardEvent} */ ev) {
+
+            if (nave.muerta) {
+                return;
+            }
+
+            switch(ev.keyCode) {
+                case 32: // barra espaciadora (disparar láser)
+                    dispararLaser();
+                    break;
+                case 37: // flecha izquierda (rotar nave a la izquierda)
+                    nave.rot = VEL_GIRO_NAVE / 180 * Math.PI / FPS;
+                    break;
+                case 38: // flecha arriba (impulsar la nave hacia adelante)
+                    nave.impulsando = true;
+                    break;
+                case 39: // flecha derecha (rotar nave a la derecha)
+                    nave.rot = -VEL_GIRO_NAVE / 180 * Math.PI / FPS;
+                    break;
+            }
+        }
+
+        function teclaArriba(/** @type {KeyboardEvent} */ ev) {
+
+            if (nave.muerta) {
+                return;
+            }
+
+            switch(ev.keyCode) {
+                case 32: // barra espaciadora (permitir disparar de nuevo)
+                    nave.puedeDisparar = true;
+                    break;
+                case 37: // flecha izquierda (dejar de rotar a la izquierda)
+                    nave.rot = 0;
+                    break;
+                case 38: // flecha arriba (dejar de impulsar)
+                    nave.impulsando = false;
+                    break;
+                case 39: // flecha derecha (dejar de rotar a la derecha)
+                    nave.rot = 0;
+                    break;
+            }
+        }
+
+        function nuevoAsteroide(x, y, r) {
+            var multNivel = 1 + 0.1 * nivel;
+            var asteroide = {
+                x: x,
+                y: y,
+                xv: Math.random() * AST_VEL * multNivel / FPS * (Math.random() < 0.5 ? 1 : -1),
+                yv: Math.random() * AST_VEL * multNivel / FPS * (Math.random() < 0.5 ? 1 : -1),
+                a: Math.random() * Math.PI * 2, // en radianes
+                r: r,
+                desplazamientos: [],
+                vert: Math.floor(Math.random() * (AST_VERT + 1) + AST_VERT / 2)
+            };
+
+            // llenar el array de desplazamientos
+            for (var i = 0; i < asteroide.vert; i++) {
+                asteroide.desplazamientos.push(Math.random() * AST_IRREGULARIDAD * 2 + 1 - AST_IRREGULARIDAD);
+            }
+
+            return asteroide;
+        }
+
+        function juegoNuevo() {
+            nivel = 0;
+            vidas = VIDAS_JUEGO;
+            puntuacion = 0;
+            nave = nuevaNave();
+
+            // obtener la puntuación alta del almacenamiento local
+            var puntuacionStr = localStorage.getItem(CLAVE_GUARDAR_PUNTUACION);
+            if (puntuacionStr == null) {
+                puntuacionAlta = 0;
+            } else {
+                puntuacionAlta = parseInt(puntuacionStr);
+            }
+
+            nivelNuevo();
+        }
+
+        function nivelNuevo() {
+            musica.establecerRelacionAsteroides(1);
+            texto = "Nivel " + (nivel + 1);
+            alfaTexto = 1.0;
+            crearCinturonAsteroides();
+        }
+
+        function nuevaNave() {
+            return {
+                x: lienzo.width / 2,
+                y: lienzo.height / 2,
+                a: 90 / 180 * Math.PI, // convertir a radianes
+                r: TAM_NAVE / 2,
+                numParpadeos: Math.ceil(DUR_INV_NAVE / DUR_PARPADEO_NAVE),
+                tiempoParpadeo: Math.ceil(DUR_PARPADEO_NAVE * FPS),
+                puedeDisparar: true,
+                muerta: false,
+                tiempoExplosion: 0,
+                laseres: [],
+                rot: 0,
+                impulsando: false,
+                empuje: {
+                    x: 0,
+                    y: 0
+                }
+            }
+        }
+
+        function dispararLaser() {
+            // crear el objeto láser
+            if (nave.puedeDisparar && nave.laseres.length < LASER_MAX) {
+                nave.laseres.push({ // desde la nariz de la nave
+                    x: nave.x + 4 / 3 * nave.r * Math.cos(nave.a),
+                    y: nave.y - 4 / 3 * nave.r * Math.sin(nave.a),
+                    xv: VEL_LASER * Math.cos(nave.a) / FPS,
+                    yv: -VEL_LASER * Math.sin(nave.a) / FPS,
+                    dist: 0,
+                    tiempoExplosion: 0
+                });
+                fxLaser.play();
+            }
+
+            // evitar más disparos
+            nave.puedeDisparar = false;
+        }
+
+        function Music(srcBajo, srcAlto) {
+            this.sonidoBajo = new Audio(srcBajo);
+            this.sonidoAlto = new Audio(srcAlto);
+            this.bajo = true;
+            this.tempo = 1.0; // segundos por latido
+            this.tiempoLatido = 0; // fotogramas restantes hasta el próximo latido
+
+            this.play = function() {
+                if (MUSICA_ENCENDIDA) {
+                    if (this.bajo) {
+                        this.sonidoBajo.play();
+                    } else {
+                        this.sonidoAlto.play();
+                    }
+                    this.bajo = !this.bajo;
+                }
+            }
+
+            this.establecerRelacionAsteroides = function(relacion) {
+                this.tempo = 1.0 - 0.75 * (1.0 - relacion);
+            }
+
+            this.tick = function() {
+                if (this.tiempoLatido == 0) {
+                    this.play();
+                    this.tiempoLatido = Math.ceil(this.tempo * FPS);
+                } else {
+                    this.tiempoLatido--;
+                }
+            }
+        }
+
+        function Sound(src, maxCorrientes = 1, vol = 1.0) {
+            this.numCorriente = 0;
+            this.corrientes = [];
+            for (var i = 0; i < maxCorrientes; i++) {
+                this.corrientes.push(new Audio(src));
+                this.corrientes[i].volume = vol;
+            }
+
+            this.play = function() {
+                if (SONIDO_ENCENDIDO) {
+                    this.numCorriente = (this.numCorriente + 1) % maxCorrientes;
+                    this.corrientes[this.numCorriente].play();
+                }
+            }
+
+            this.stop = function() {
+                this.corrientes[this.numCorriente].pause();
+                this.corrientes[this.numCorriente].currentTime = 0;
+            }
+        }
+
+        function actualizar() {
+            var parpadeando = nave.numParpadeos % 2 == 0;
+            var explotando = nave.tiempoExplosion > 0;
+
+            // marcar la música
+            musica.tick();
+
+            // dibujar espacio
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, lienzo.width, lienzo.height);
+
+            // dibujar los asteroides
+            var a, r, x, y, desplazamientos, vert;
+            for (var i = 0; i < asteroides.length; i++) {
+                ctx.strokeStyle = "slategrey";
+                ctx.lineWidth = TAM_NAVE / 20;
+
+                // obtener las propiedades del asteroide
+                a = asteroides[i].a;
+                r = asteroides[i].r;
+                x = asteroides[i].x;
+                y = asteroides[i].y;
+                desplazamientos = asteroides[i].desplazamientos;
+                vert = asteroides[i].vert;
+                
+                // dibujar la ruta
+                ctx.beginPath();
+                ctx.moveTo(
+                    x + r * desplazamientos[0] * Math.cos(a),
+                    y + r * desplazamientos[0] * Math.sin(a)
+                );
+
+                // dibujar el polígono
+                for (var j = 1; j < vert; j++) {
+                    ctx.lineTo(
+                        x + r * desplazamientos[j] * Math.cos(a + j * Math.PI * 2 / vert),
+                        y + r * desplazamientos[j] * Math.sin(a + j * Math.PI * 2 / vert)
+                    );
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                // mostrar el círculo de colisión del asteroide
+                if (MOSTRAR_LIMITES) {
+                    ctx.strokeStyle = "lime";
+                    ctx.beginPath();
+                    ctx.arc(x, y, r, 0, Math.PI * 2, false);
+                    ctx.stroke();
+                }
+            }
+            
+            // impulsar la nave
+            if (nave.impulsando && !nave.muerta) {
+                nave.empuje.x += EMPUJE_NAVE * Math.cos(nave.a) / FPS;
+                nave.empuje.y -= EMPUJE_NAVE * Math.sin(nave.a) / FPS;
+                fxEmpuje.play();
+
+                // dibujar el propulsor
+                if (!explotando && parpadeando) {
+                    ctx.fillStyle = "red";
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = TAM_NAVE / 10;
+                    ctx.beginPath();
+                    ctx.moveTo( // parte trasera izquierda
+                        nave.x - nave.r * (2 / 3 * Math.cos(nave.a) + 0.5 * Math.sin(nave.a)),
+                        nave.y + nave.r * (2 / 3 * Math.sin(nave.a) - 0.5 * Math.cos(nave.a))
+                    );
+                    ctx.lineTo( // centro trasero (detrás de la nave)
+                        nave.x - nave.r * 5 / 3 * Math.cos(nave.a),
+                        nave.y + nave.r * 5 / 3 * Math.sin(nave.a)
+                    );
+                    ctx.lineTo( // parte trasera derecha
+                        nave.x - nave.r * (2 / 3 * Math.cos(nave.a) - 0.5 * Math.sin(nave.a)),
+                        nave.y + nave.r * (2 / 3 * Math.sin(nave.a) + 0.5 * Math.cos(nave.a))
+                    );
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            } else {
+                // aplicar fricción (ralentizar la nave cuando no está impulsando)
+                nave.empuje.x -= FRICCION * nave.empuje.x / FPS;
+                nave.empuje.y -= FRICCION * nave.empuje.y / FPS;
+                fxEmpuje.stop();
+            }
+            
+            // dibujar la nave triangular
+            if (!explotando) {
+                if (parpadeando && !nave.muerta) {
+                    dibujarNave(nave.x, nave.y, nave.a);
+                }
+
+                // manejar el parpadeo
+                if (nave.numParpadeos > 0) {
+
+                    // reducir el tiempo de parpadeo
+                    nave.tiempoParpadeo--;
+
+                    // reducir el número de parpadeos
+                    if (nave.tiempoParpadeo == 0) {
+                        nave.tiempoParpadeo = Math.ceil(DUR_PARPADEO_NAVE * FPS);
+                        nave.numParpadeos--;
+                    }
+                }
+            } else {
+                // dibujar la explosión (círculos concéntricos de diferentes colores)
+                ctx.fillStyle = "darkred";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r * 1.7, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.fillStyle = "red";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r * 1.4, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.fillStyle = "orange";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r * 1.1, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.fillStyle = "yellow";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r * 0.8, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r * 0.5, 0, Math.PI * 2, false);
+                ctx.fill();
+            }
+
+            // mostrar el círculo de colisión de la nave
+            if (MOSTRAR_LIMITES) {
+                ctx.strokeStyle = "lime";
+                ctx.beginPath();
+                ctx.arc(nave.x, nave.y, nave.r, 0, Math.PI * 2, false);
+                ctx.stroke();
+            }
+            
+            // mostrar el punto central de la nave
+            if (MOSTRAR_PUNTO_CENTRO) {
+                ctx.fillStyle = "red";
+                ctx.fillRect(nave.x - 1, nave.y - 1, 2, 2);
+            }
+
+            // dibujar los láseres
+            for (var i = 0; i < nave.laseres.length; i++) {
+                if (nave.laseres[i].tiempoExplosion == 0) {
+                    ctx.fillStyle = "salmon";
+                    ctx.beginPath();
+                    ctx.arc(nave.laseres[i].x, nave.laseres[i].y, TAM_NAVE / 15, 0, Math.PI * 2, false);
+                    ctx.fill();
+                } else {
+                    // dibujar la explosión
+                    ctx.fillStyle = "orangered";
+                    ctx.beginPath();
+                    ctx.arc(nave.laseres[i].x, nave.laseres[i].y, nave.r * 0.75, 0, Math.PI * 2, false);
+                    ctx.fill();
+                    ctx.fillStyle = "salmon";
+                    ctx.beginPath();
+                    ctx.arc(nave.laseres[i].x, nave.laseres[i].y, nave.r * 0.5, 0, Math.PI * 2, false);
+                    ctx.fill();
+                    ctx.fillStyle = "pink";
+                    ctx.beginPath();
+                    ctx.arc(nave.laseres[i].x, nave.laseres[i].y, nave.r * 0.25, 0, Math.PI * 2, false);
+                    ctx.fill();
+                }
+            }
+
+            // dibujar el texto del juego
+            if (alfaTexto >= 0) {
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "rgba(255, 255, 255, " + alfaTexto + ")";
+                ctx.font = "small-caps " + TAM_TEXTO + "px dejavu sans mono";
+                ctx.fillText(texto, lienzo.width / 2, lienzo.height * 0.75);
+                alfaTexto -= (1.0 / TIEMPO_DESVANECIMIENTO_TEXTO / FPS);
+            } else if (nave.muerta) {
+                // después de que "game over" se desvanece, iniciar un nuevo juego
+                juegoNuevo();
+            }
+
+            // dibujar las vidas
+            var colorVida;
+            for (var i = 0; i < vidas; i++) {
+                colorVida = explotando && i == vidas - 1 ? "red" : "white";
+                dibujarNave(TAM_NAVE + i * TAM_NAVE * 1.2, TAM_NAVE, 0.5 * Math.PI, colorVida);
+            }
+
+            // dibujar la puntuación
+            ctx.textAlign = "right";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "white";
+            ctx.font = TAM_TEXTO + "px dejavu sans mono";
+            ctx.fillText(puntuacion, lienzo.width - TAM_NAVE / 2, TAM_NAVE);
+
+            // dibujar la puntuación alta
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "white";
+            ctx.font = (TAM_TEXTO * 0.75) + "px dejavu sans mono";
+            ctx.fillText("MEJOR " + puntuacionAlta, lienzo.width / 2, TAM_NAVE);
+
+            // detectar impactos de láser en asteroides
+            var ax, ay, ar, lx, ly;
+            for (var i = asteroides.length - 1; i >= 0; i--) {
+
+                // tomar las propiedades del asteroide
+                ax = asteroides[i].x;
+                ay = asteroides[i].y;
+                ar = asteroides[i].r;
+
+                // recorrer los láseres
+                for (var j = nave.laseres.length - 1; j >= 0; j--) {
+
+                    // tomar las propiedades del láser
+                    lx = nave.laseres[j].x;
+                    ly = nave.laseres[j].y;
+
+                    // detectar impactos
+                    if (nave.laseres[j].tiempoExplosion == 0 && distanciaEntrePuntos(ax, ay, lx, ly) < ar) {
+
+                        // destruir el asteroide y activar la explosión del láser
+                        destruirAsteroide(i);
+                        nave.laseres[j].tiempoExplosion = Math.ceil(DUR_EXPLOSION_LASER * FPS);
+                        break;
+                    }
+                }
+            }
+
+            // verificar colisiones de asteroides (cuando no está explotando)
+            if (!explotando) {
+
+                // solo verificar cuando no está parpadeando
+                if (nave.numParpadeos == 0 && !nave.muerta) {
+                    for (var i = 0; i < asteroides.length; i++) {
+                        if (distanciaEntrePuntos(nave.x, nave.y, asteroides[i].x, asteroides[i].y) < nave.r + asteroides[i].r) {
+                            explotarNave();
+                            destruirAsteroide(i);
+                            break;
+                        }
+                    }
+                }
+
+                // rotar la nave
+                nave.a += nave.rot;
+
+                // mover la nave
+                nave.x += nave.empuje.x;
+                nave.y += nave.empuje.y;
+            } else {
+                // reducir el tiempo de explosión
+                nave.tiempoExplosion--;
+
+                // reiniciar la nave después de que la explosión haya terminado
+                if (nave.tiempoExplosion == 0) {
+                    vidas--;
+                    if (vidas == 0) {
+                        juegoTerminado();
+                    } else {
+                        nave = nuevaNave();
+                    }
+                }
+            }
+
+            // manejar el borde de la pantalla
+            if (nave.x < 0 - nave.r) {
+                nave.x = lienzo.width + nave.r;
+            } else if (nave.x > lienzo.width + nave.r) {
+                nave.x = 0 - nave.r;
+            }
+            if (nave.y < 0 - nave.r) {
+                nave.y = lienzo.height + nave.r;
+            } else if (nave.y > lienzo.height + nave.r) {
+                nave.y = 0 - nave.r;
+            }
+
+            // mover los láseres
+            for (var i = nave.laseres.length - 1; i >= 0; i--) {
+                
+                // verificar la distancia recorrida
+                if (nave.laseres[i].dist > DIST_LASER * lienzo.width) {
+                    nave.laseres.splice(i, 1);
+                    continue;
+                }
+
+                // manejar la explosión
+                if (nave.laseres[i].tiempoExplosion > 0) {
+                    nave.laseres[i].tiempoExplosion--;
+
+                    // destruir el láser después de que termine la duración
+                    if (nave.laseres[i].tiempoExplosion == 0) {
+                        nave.laseres.splice(i, 1);
+                        continue;
+                    }
+                } else {
+                    // mover el láser
+                    nave.laseres[i].x += nave.laseres[i].xv;
+                    nave.laseres[i].y += nave.laseres[i].yv;
+
+                    // calcular la distancia recorrida
+                    nave.laseres[i].dist += Math.sqrt(Math.pow(nave.laseres[i].xv, 2) + Math.pow(nave.laseres[i].yv, 2));
+                }
+
+                // manejar el borde de la pantalla
+                if (nave.laseres[i].x < 0) {
+                    nave.laseres[i].x = lienzo.width;
+                } else if (nave.laseres[i].x > lienzo.width) {
+                    nave.laseres[i].x = 0;
+                }
+                if (nave.laseres[i].y < 0) {
+                    nave.laseres[i].y = lienzo.height;
+                } else if (nave.laseres[i].y > lienzo.height) {
+                    nave.laseres[i].y = 0;
+                }
+            }
+
+            // mover los asteroides
+            for (var i = 0; i < asteroides.length; i++) {
+                asteroides[i].x += asteroides[i].xv;
+                asteroides[i].y += asteroides[i].yv;
+
+                // manejar el borde de la pantalla del asteroide
+                if (asteroides[i].x < 0 - asteroides[i].r) {
+                    asteroides[i].x = lienzo.width + asteroides[i].r;
+                } else if (asteroides[i].x > lienzo.width + asteroides[i].r) {
+                    asteroides[i].x = 0 - asteroides[i].r
+                }
+                if (asteroides[i].y < 0 - asteroides[i].r) {
+                    asteroides[i].y = lienzo.height + asteroides[i].r;
+                } else if (asteroides[i].y > lienzo.height + asteroides[i].r) {
+                    asteroides[i].y = 0 - asteroides[i].r
+                }
+            }
+        }
+    </script>
+</body>
+</html>
